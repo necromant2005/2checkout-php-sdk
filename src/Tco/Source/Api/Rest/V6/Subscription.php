@@ -2,144 +2,80 @@
 
 namespace Tco\Source\Api\Rest\V6;
 
+use Tco\Interfaces\Auth;
+use Tco\Source\TcoConfig;
 use Tco\Exceptions\TcoException;
 
-class Subscription {
 
-    private $core;
-    private $acceptedSearchSubscriptionParams = array(
-        'SubscriptionReference',
-        'CustomerEmail',
-        'DeliveredCode',
-        'AvangateCustomerReference',
-        'ExternalCustomerReference',
-        'Aggregate',
-        'SubscriptionEnabled',
-        'RecurringEnabled',
-        'ProductCodes',
-        'CountryCodes',
-        'PurchasedAfter',
-        'PurchasedBefore',
-        'ExpireAfter',
-        'ExpireBefore',
-        'RenewedAfter',
-        'RenewedBefore',
-        'NotificationAfter',
-        'NotificationBefore',
-        'ModifiedAfter',
-        'ModifiedBefore',
-        'NextBillingDateAfter',
-        'NextBillingDateBefore',
-        'LifetimeSubscription',
-        'ModifiedAfter',
-        'MerchantCode'
-    );
+class ApiCore {
 
-    public function __construct( $apiCore ) {
-        $this->core = $apiCore;
-    }
+    /**
+     * @var TcoConfig
+     */
+    public $tcoConfig;
 
-    public function validateSubscriptionSearchParams( $searchParams ) {
-        $notAccepted = array();
-        foreach ( $searchParams as $k => $v ) {
-            if ( ! array_key_exists( $k, array_flip( $this->acceptedSearchSubscriptionParams ) ) ) {
-                $notAccepted[] = $k;
-            }
-        }
+    /**
+     * @var Auth
+     */
+    public $auth;
 
-        return $notAccepted;
+    /**
+     * ApiCore constructor.
+     *
+     * @param TcoConfig $tcoConfig
+     * @param Auth $auth
+     */
+    public function __construct( $tcoConfig, $auth ) {
+        $this->tcoConfig = $tcoConfig;
+        $this->auth      = $auth;
     }
 
     /**
-     * @returns array with keys (LineItemReference) && values (array of SubscriptionReferences)
-     * or empty array
+     * @param $endpoint
+     * @param $params
+     * @param string $method
+     * @param string $apiLocation
+     *
+     * @return mixed
+     * @throws \TcoException
      */
-    public function getSubscriptionsByOrderRefNo( $orderRefNo ) {
-        $order     = new Order( $this->core );
-        $orderData = null;
+    public function call( $endpoint, $params, $method = 'POST', $apiLocation = 'restApi' ) {
+
         try {
-            $orderData = $order->getOrder( array( 'RefNo' => $orderRefNo ) );
-        } catch ( TcoException $exception ) {
-            throw new TcoException( sprintf( 'Exception getting subscriptions by order RefNo %s',
-                $exception->getMessage() ) );
-        }
-        $items                   = $orderData["Items"];
-        $subscriptionsRefNoArray = array();
+            $url = $this->tcoConfig->getApiEndpoints()[ $apiLocation ] . $endpoint;
+            $ch  = curl_init();
+            curl_setopt( $ch, CURLOPT_URL, $url );
+            curl_setopt( $ch, CURLOPT_HTTPHEADER, $this->auth->getHeaders() );
+            curl_setopt( $ch, CURLOPT_RETURNTRANSFER, true );
+            curl_setopt( $ch, CURLOPT_HEADER, false );
 
-        foreach ( $items as $k => $productData ) {
-            if ( isset( $productData['ProductDetails']['Subscriptions'][0] ) ) {
-                $productSubscriptions = $productData['ProductDetails']['Subscriptions'];
-                $lineItemReference    = $items[ $k ]['LineItemReference'];
-                foreach ( $productSubscriptions as $k => $subscription ) {
-                    $subscriptionsRefNoArray[ $lineItemReference ][] = $subscription['SubscriptionReference'];
-                }
+            if ( ! $this->tcoConfig->getCurlVerifySsl() ) {
+                curl_setopt( $ch, CURLOPT_SSL_VERIFYHOST, false ); //by default value is 2
+                curl_setopt( $ch, CURLOPT_SSL_VERIFYPEER, false ); //by default value is 1
             }
-        }
 
-        return $subscriptionsRefNoArray;
-
-    }
-
-    public function searchSubscriptions( $searchParams ) {
-        $rejectedParams = $this->validateSubscriptionSearchParams( $searchParams );
-        if ( count( $rejectedParams ) == 0 ) {
-            try {
-                $search = '/subscriptions/';
-                //If subscriptionReferenceId then we only search by it
-                if ( isset( $searchParams['SubscriptionReference'] ) ) {
-                    $search .= $searchParams['SubscriptionReference'] . '/';
-                    unset( $searchParams );
-                }
-
-                //Else do search for multiple orders using the mix of parameters.
-                if ( ! empty( $searchParams ) ) {
-                    $search .= '?' . http_build_query( $searchParams );
-                }
-
-                return $this->core->call( $search, [], 'GET' );
-            } catch ( TcoException $exception ) {
-                throw new TcoException( sprintf( 'Error when trying to search for subscription: %s',
-                    $exception->getMessage() ) );
+            if ( $method === 'POST' ) {
+                curl_setopt( $ch, CURLOPT_POST, true );
+                curl_setopt( $ch, CURLOPT_POSTFIELDS, json_encode( $params, JSON_UNESCAPED_UNICODE ) );
             }
-        } else {
-            throw new TcoException( sprintf( 'Exception! Some subscription search parameters are not accepted: %s',
-                implode( ', ', $rejectedParams ) ) );
-        }
-    }
-
-    public function updateSubscriptions( $updatedSubscriptionParams ) {
-        if ( isset( $updatedSubscriptionParams['SubscriptionReference'] ) ) {
-            $endPoint = '/subscriptions/' . $updatedSubscriptionParams['SubscriptionReference'] . '/';
-            try {
-                return $this->core->call( $endPoint, $updatedSubscriptionParams, 'PUT' );
-            } catch ( TcoException $exception ) {
-                throw new TcoException( sprintf( 'Exception when updating subscription! Message: %s',
-                    $exception->getMessage() ) );
+            if ( $method === 'PUT' ) {
+                curl_setopt( $ch, CURLOPT_CUSTOMREQUEST, 'PUT');
+                curl_setopt( $ch, CURLOPT_POSTFIELDS, json_encode( $params, JSON_UNESCAPED_UNICODE ) );
             }
-        }
-    }
-
-    public function enableSubscriptions( $updatedSubscriptionParams ) {
-        if ( isset( $updatedSubscriptionParams['SubscriptionReference'] ) ) {
-            $endPoint = '/subscriptions/' . $updatedSubscriptionParams['SubscriptionReference'] . '/';
-            try {
-                return $this->core->call( $endPoint, [], 'POST' );
-            } catch ( TcoException $exception ) {
-                throw new TcoException( sprintf( 'Exception when Enabling subscription! Message: %s',
-                    $exception->getMessage() ) );
+            if ( $method === 'DELETE' ) {
+                curl_setopt( $ch, CURLOPT_CUSTOMREQUEST, 'DELETE');
             }
-        }
-    }
 
-    public function disableSubscriptions( $updatedSubscriptionParams ) {
-        if ( isset( $updatedSubscriptionParams['SubscriptionReference'] ) ) {
-            $endPoint = '/subscriptions/' . $updatedSubscriptionParams['SubscriptionReference'] . '/';
-            try {
-                return $this->core->call( $endPoint, [], 'DELETE' );
-            } catch ( TcoException $exception ) {
-                throw new TcoException( sprintf( 'Exception when Enabling subscription! Message: %s',
-                    $exception->getMessage() ) );
+            $response = curl_exec( $ch );
+            curl_close( $ch );
+            if ( $response === false ) {
+                throw new TcoException( sprintf('Curl response :%s', curl_error( $ch )));
             }
+
+            return json_decode( $response, true );
+        } catch ( Exception $e ) {
+            throw new TcoException( sprintf('Exception ApiCore response: %s', $e->getMessage()
+            ) );
         }
     }
 }
